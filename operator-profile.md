@@ -72,6 +72,9 @@ Update this file whenever your preferences, goals, or constraints change.
 - Current projects or themes I want associated with my profile:
 - Personal brand notes:
 
+## Invitations and Outreach
+For invites, always consult JOB_OUTREACH.md. Edit it if necessary.
+
 ## Examples
 
 ### Good reply example
