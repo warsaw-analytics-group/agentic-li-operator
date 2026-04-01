@@ -114,6 +114,47 @@ async function main() {
     });
 
   program
+    .command("search-people")
+    .description("search LinkedIn people results without sending invites")
+    .requiredOption("--query <text>", "free-text LinkedIn people search query")
+    .option("--limit <n>", "maximum number of people", (value) => Number.parseInt(value, 10), 10)
+    .option("--debug-artifacts", "save screenshot and HTML for selector debugging")
+    .option("--output <path>", "write JSON output to a file")
+    .action(async (options) => {
+      const client = buildClient(program.opts());
+      const result = await client.searchPeople(options.query, options.limit, {
+        debugArtifacts: options.debugArtifacts,
+      });
+      await emitResult(result, options.output);
+    });
+
+  program
+    .command("invite-search")
+    .description("search LinkedIn people results and send invites to the top matches in one session")
+    .requiredOption("--query <text>", "free-text LinkedIn people search query")
+    .option("--limit <n>", "maximum number of invites to attempt", (value) => Number.parseInt(value, 10), 5)
+    .option("--note <text>", "optional custom invite note")
+    .option("--output <path>", "write JSON output to a file")
+    .action(async (options) => {
+      const noteSummary = options.note ? `\n\nInvite note:\n${options.note}` : "\n\nInvite note: none";
+      const confirmed = program.opts().yes
+        ? true
+        : await confirmMutation(
+            `About to search LinkedIn people and send up to ${options.limit} connection invites.\n\nQuery:\n${options.query}${noteSummary}`,
+          );
+      if (!confirmed) {
+        await emitResult({ ok: false, canceled: true, reason: "User declined confirmation." });
+        return;
+      }
+
+      const client = buildClient(program.opts());
+      const result = await client.invitePeopleFromSearch(options.query, options.limit, {
+        note: options.note,
+      });
+      await emitResult(result, options.output);
+    });
+
+  program
     .command("thread")
     .description("read a specific message thread")
     .requiredOption("--thread-url <url>", "LinkedIn thread URL")

@@ -60,6 +60,8 @@ Run from the project root.
 npm start -- collect --output .output/collect.json
 npm start -- inbox --limit 10 --output .output/inbox.json
 npm start -- feed --limit 10 --output .output/feed.json
+npm start -- search-people --query "..." --limit 10
+npm start -- invite-search --query "..." --limit 5 --note "..."
 npm start -- thread --thread-url "https://www.linkedin.com/messaging/thread/..."
 npm start -- send --thread-url "https://www.linkedin.com/messaging/thread/..." --message "..."
 npm start -- comment --post-url "https://www.linkedin.com/feed/update/..." --message "..."
@@ -71,6 +73,7 @@ For already-approved mutating actions, pass `--yes` to skip the CLI confirmation
 ```bash
 npm start -- --yes send --thread-url "https://www.linkedin.com/messaging/thread/..." --message "..."
 npm start -- --yes comment --post-url "https://www.linkedin.com/feed/update/..." --message "..."
+npm start -- --yes invite-search --query "..." --limit 5 --note "..."
 ```
 
 Visible browser mode is the default. Use `--headless` only if you explicitly want background execution and it works reliably in your environment.
@@ -168,11 +171,12 @@ If the feed item only contains a profile URL or the page structure is ambiguous,
 - Read full message threads
 - Send a message
 - Send a connection invite with a note on supported profile layouts
+- Search LinkedIn people and send a batch of invites in one browser session
 - Post a comment on a direct post URL
 
 ## Current limitations
 
 - Feed parsing is heuristic and can break when LinkedIn changes markup.
 - Comment execution depends on a direct post URL and current LinkedIn comment composer selectors.
-- Connection invites depend on the current top-card layout and may require selector updates when LinkedIn changes the `Connect` or `custom-invite` flow.
+- Connection invites depend on the current search-result and profile-card layouts and may require selector updates when LinkedIn changes the `Connect` or invite dialog flow.
 - Connection acceptance and reactions are not yet implemented as executor commands.

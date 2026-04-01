@@ -10,6 +10,7 @@ This project is built around a persistent local LinkedIn browser session and a g
 - draft replies and post ideas
 - run an approval-gated daily session
 - send messages only when you explicitly approve
+- search people and send a batch of connection invites in one browser session
 - send connection invites with a custom note on supported profile layouts
 - post comments on direct LinkedIn post URLs
 
@@ -206,6 +207,28 @@ node ./scripts/send-connection-invite.mjs "https://www.linkedin.com/in/some-prof
 ```
 
 This uses the saved local LinkedIn session and targets the primary action area in the top profile card. It currently supports the direct `custom-invite` link variant and visible `Connect` actions in the hero section.
+
+### Search people and invite the top matches in one session
+
+Review-only search:
+
+```bash
+npm start -- search-people --query "ai founders in berlin" --limit 10
+```
+
+Approved batch invite flow:
+
+```bash
+npm start -- invite-search --query "ai founders in berlin" --limit 5
+```
+
+With a custom note:
+
+```bash
+npm start -- invite-search --query "b2b saas cmos in london" --limit 5 --note "Building in this space too. Open to connecting."
+```
+
+This runs the search and invite attempts inside one persistent browser session, then returns a per-profile status report so Codex can tell you which invites were sent and which failed or were already pending.
 
 ### Draft a post
 

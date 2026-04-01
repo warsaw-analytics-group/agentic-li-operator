@@ -12,6 +12,26 @@ function normalizeText(value) {
   return value?.replace(/\s+/g, " ").trim() ?? "";
 }
 
+function normalizeProfileUrl(value) {
+  const raw = normalizeText(value);
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const url = new URL(raw);
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return raw.replace(/[?#].*$/, "").replace(/\/+$/, "");
+  }
+}
+
+function buildPeopleSearchUrl(query) {
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(query)}&origin=GLOBAL_SEARCH_HEADER`;
+}
+
 async function textContent(locator) {
   try {
     return normalizeText(await locator.textContent({ timeout: 3000 }));
@@ -91,6 +111,260 @@ async function captureDebugArtifacts(page, name) {
   return {
     screenshotPath,
     htmlPath,
+  };
+}
+
+async function clickFirstVisible(scope, selectors) {
+  for (const selector of selectors) {
+    const locator = scope.locator(selector).first();
+    const visible = await locator.isVisible().catch(() => false);
+    if (!visible) {
+      continue;
+    }
+
+    const enabled = await locator.isEnabled().catch(() => true);
+    if (enabled) {
+      await locator.click();
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function scrollSearchResults(page, targetCount) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const count = await page.locator("main a[href*='/in/']").count();
+    if (count >= targetCount) {
+      return;
+    }
+
+    await page.mouse.wheel(0, 2200).catch(() => {});
+    await page.waitForTimeout(1200);
+  }
+}
+
+async function extractPeopleSearchResults(page, limit) {
+  return page.evaluate((maxItems) => {
+    const normalize = (value) => value?.replace(/\s+/g, " ").trim() ?? "";
+    const root = document.querySelector("main") || document.body;
+    const anchors = Array.from(root.querySelectorAll('a[href*="/in/"]'));
+    const items = [];
+    const seen = new Set();
+
+    for (const anchor of anchors) {
+      const anchorText = normalize(anchor.textContent || "");
+      if (
+        !anchorText ||
+        anchorText.length < 40 ||
+        !/(connect|message|follow|current:|current )/i.test(anchorText) ||
+        /mutual connection/i.test(anchorText)
+      ) {
+        continue;
+      }
+
+      const profileUrl = anchor.href.split("?")[0].replace(/\/+$/, "");
+      if (!profileUrl || seen.has(profileUrl)) {
+        continue;
+      }
+
+      const text = anchorText;
+      const leadingSegment = text.split(/Connect|Message|Follow|Current:|Current /i)[0];
+      const name = normalize(leadingSegment.split("•")[0]);
+
+      if (!name || name.length < 2) {
+        continue;
+      }
+
+      const cleaned = text
+        .replace(name, "")
+        .replace(/^Follow\s*/i, "")
+        .replace(/\s*Message\s*/gi, " ")
+        .trim();
+
+      const parts = cleaned
+        .split(/\n| · |Current:|Current /)
+        .map((part) => normalize(part))
+        .filter(Boolean);
+
+      let headline = "";
+      let location = "";
+      for (const part of parts) {
+        if (
+          !headline &&
+          part.length > 6 &&
+          !/(connect|message|follow|mutual connection|2nd|3rd\+|3rd)/i.test(part)
+        ) {
+          headline = part;
+          continue;
+        }
+
+        if (
+          !location &&
+          /(remote|united states|usa|europe|poland|germany|france|spain|italy|uk|united kingdom|warsaw|krakow|berlin|london|paris|madrid|rome|metropolitan area)/i.test(part)
+        ) {
+          location = part;
+        }
+      }
+
+      seen.add(profileUrl);
+      items.push({
+        name,
+        headline,
+        location,
+        profileUrl,
+        rawText: text,
+      });
+
+      if (items.length >= maxItems) {
+        break;
+      }
+    }
+
+    return items;
+  }, limit);
+}
+
+function summarizeInviteState(text) {
+  const haystack = normalizeText(text).toLowerCase();
+  if (!haystack) {
+    return "unknown";
+  }
+  if (/\bpending\b|oczekuje/.test(haystack)) {
+    return "pending";
+  }
+  if (/\bmessage\b|wiadomość/.test(haystack) && !/\bconnect\b|zaproś/.test(haystack)) {
+    return "connected";
+  }
+  if (/\bfollow\b|obserwuj/.test(haystack) && !/\bconnect\b|zaproś/.test(haystack)) {
+    return "follow_only";
+  }
+  if (/\bconnect\b|zaproś/.test(haystack)) {
+    return "invitable";
+  }
+  return "unknown";
+}
+
+async function completeInviteDialog(page, note) {
+  const dialog = page.locator("[role='dialog']").last();
+  const visible = await dialog.isVisible().catch(() => false);
+
+  if (!visible) {
+    return { ok: false, reason: "Invite dialog did not appear." };
+  }
+
+  if (note) {
+    const addNoteClicked = await clickFirstVisible(dialog, [
+      "button:has-text('Add a note')",
+      "button:has-text('Dodaj notatkę')",
+    ]);
+
+    if (addNoteClicked) {
+      await page.waitForTimeout(600);
+    }
+
+    const textarea = dialog.locator("textarea, #custom-message").first();
+    if (await textarea.isVisible().catch(() => false)) {
+      await textarea.fill(note);
+    }
+  }
+
+  const sent = await clickFirstVisible(
+    dialog,
+    note
+      ? [
+          "button:has-text('Send')",
+          "button:has-text('Wyślij')",
+          "button:has-text('Done')",
+          "button:has-text('Got it')",
+        ]
+      : [
+          "button:has-text('Send without a note')",
+          "button:has-text('Wyślij bez notatki')",
+          "button:has-text('Send')",
+          "button:has-text('Wyślij')",
+          "button:has-text('Done')",
+          "button:has-text('Got it')",
+        ],
+  );
+
+  if (!sent) {
+    return { ok: false, reason: "Could not submit the invitation dialog." };
+  }
+
+  await page.waitForTimeout(1500);
+  return { ok: true };
+}
+
+async function inviteSearchResult(page, result, note) {
+  const profileUrl = normalizeProfileUrl(result.profileUrl);
+  await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(2500);
+  await boundedNetworkIdle(page);
+  await ensureSignedIn(page);
+
+  const hero = page.locator("main section").first();
+  await hero.waitFor({ state: "visible", timeout: 10000 });
+
+  const preState = summarizeInviteState(await hero.innerText().catch(() => ""));
+  if (preState === "pending") {
+    return { ok: false, status: "pending", reason: "Invite already pending." };
+  }
+  if (preState === "connected") {
+    return { ok: false, status: "connected", reason: "Already connected." };
+  }
+  if (preState === "follow_only") {
+    return { ok: false, status: "follow_only", reason: "Profile exposes Follow instead of Connect." };
+  }
+
+  let connectClicked = await clickFirstVisible(hero, [
+    "a[href*='/preload/custom-invite/']",
+    "button:has-text('Connect')",
+    "button:has-text('Zaproś')",
+    "a:has-text('Connect')",
+    "a:has-text('Zaproś')",
+  ]);
+
+  if (!connectClicked) {
+    const moreClicked = await clickFirstVisible(hero, [
+      "button[aria-label*='More actions']",
+      "button[aria-label*='Więcej działań']",
+      "button:has-text('More')",
+      "button:has-text('Więcej')",
+      ]);
+
+    if (moreClicked) {
+      await page.waitForTimeout(700);
+      connectClicked = await clickFirstVisible(page, [
+        "div[role='button']:has-text('Connect')",
+        "div[role='button']:has-text('Zaproś')",
+        "button:has-text('Connect')",
+        "button:has-text('Zaproś')",
+      ]);
+    }
+  }
+
+  if (!connectClicked) {
+    return {
+      ok: false,
+      status: preState === "invitable" ? "connect_not_clickable" : preState,
+      reason: "Could not trigger the connect action from the profile.",
+    };
+  }
+
+  await page.waitForTimeout(700);
+  const dialogResult = await completeInviteDialog(page, note);
+  if (!dialogResult.ok) {
+    return {
+      ok: false,
+      status: "invite_failed",
+      reason: dialogResult.reason,
+    };
+  }
+
+  return {
+    ok: true,
+    status: "invited",
   };
 }
 
@@ -619,6 +893,69 @@ export class LinkedInClient {
         debug: {
           url: page.url(),
         },
+      };
+    });
+  }
+
+  async searchPeople(query, limit = 10, options = {}) {
+    return this.withPage(async (page) => {
+      await page.goto(buildPeopleSearchUrl(query), {
+        waitUntil: "domcontentloaded",
+      });
+      await page.waitForTimeout(2500);
+      await boundedNetworkIdle(page);
+      await ensureSignedIn(page);
+      await scrollSearchResults(page, limit);
+
+      const results = await extractPeopleSearchResults(page, limit);
+      const payload = {
+        query,
+        count: results.length,
+        results,
+        debug: {
+          url: page.url(),
+        },
+      };
+
+      if (options.debugArtifacts || results.length === 0) {
+        payload.debug.artifacts = await captureDebugArtifacts(page, "people-search-debug");
+      }
+
+      return payload;
+    });
+  }
+
+  async invitePeopleFromSearch(query, limit = 5, options = {}) {
+    return this.withPage(async (page) => {
+      await page.goto(buildPeopleSearchUrl(query), {
+        waitUntil: "domcontentloaded",
+      });
+      await page.waitForTimeout(2500);
+      await boundedNetworkIdle(page);
+      await ensureSignedIn(page);
+      await scrollSearchResults(page, limit);
+
+      const candidates = await extractPeopleSearchResults(page, limit);
+      const results = [];
+
+      for (const candidate of candidates.slice(0, limit)) {
+        const inviteResult = await inviteSearchResult(page, candidate, options.note);
+        results.push({
+          name: candidate.name,
+          headline: candidate.headline,
+          location: candidate.location,
+          profileUrl: candidate.profileUrl,
+          ...inviteResult,
+        });
+      }
+
+      return {
+        ok: true,
+        query,
+        requestedLimit: limit,
+        matchedCount: candidates.length,
+        invitedCount: results.filter((entry) => entry.status === "invited").length,
+        results,
       };
     });
   }
