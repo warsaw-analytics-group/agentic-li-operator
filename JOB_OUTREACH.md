@@ -10,7 +10,7 @@
 
 ## Checklist
 
-- [ ] `Szymon Malecki` - Horton International Poland / Malecki Executive Search - https://www.linkedin.com/in/szymon-malecki-3554b21/
+- [x] `Szymon Malecki` - Horton International Poland / Malecki Executive Search - https://www.linkedin.com/in/szymon-malecki-3554b21/
 - [ ] `Maja Meissner` - MEISSNER & PARTNERS Executive Search and Leadership Development - https://www.linkedin.com/in/majameissner/
 - [ ] `Valeria Kolos` - DNA325 - https://www.linkedin.com/in/valeria325/
 - [x] `Taras Zvarych` - DNA325 - https://www.linkedin.com/in/taras-zvarych/
@@ -33,3 +33,4 @@
 
 - `2026-03-30`: invite sent to Barbara Rodziewicz with the Polish message
 - `2026-03-30`: invite sent to Aleksandra Pierzga with the Polish message
+- manual send to Taras
