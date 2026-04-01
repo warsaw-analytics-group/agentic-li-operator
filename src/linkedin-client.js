@@ -144,6 +144,26 @@ async function scrollSearchResults(page, targetCount) {
   }
 }
 
+async function goToNextSearchResultsPage(page) {
+  const nextButton = page.locator(
+    "[data-testid='pagination-controls-next-button-visible'], button[aria-label='Next'], button:has-text('Next')",
+  ).first();
+  const visible = await nextButton.isVisible().catch(() => false);
+  if (!visible) {
+    return false;
+  }
+
+  const enabled = await nextButton.isEnabled().catch(() => false);
+  if (!enabled) {
+    return false;
+  }
+
+  await nextButton.click();
+  await page.waitForTimeout(1500);
+  await boundedNetworkIdle(page);
+  return true;
+}
+
 async function extractPeopleSearchResults(page, limit) {
   return page.evaluate((maxItems) => {
     const normalize = (value) => value?.replace(/\s+/g, " ").trim() ?? "";
@@ -181,6 +201,13 @@ async function extractPeopleSearchResults(page, limit) {
         .replace(/^Follow\s*/i, "")
         .replace(/\s*Message\s*/gi, " ")
         .trim();
+      const searchStatus = /pending|oczekuje/i.test(text)
+        ? "pending"
+        : /message|wiadomość/i.test(text) && !/connect|zaproś/i.test(text)
+          ? "connected"
+          : /connect|zaproś|follow|obserwuj/i.test(text)
+              ? "invitable"
+              : "unknown";
 
       const parts = cleaned
         .split(/\n| · |Current:|Current /)
@@ -213,6 +240,7 @@ async function extractPeopleSearchResults(page, limit) {
         headline,
         location,
         profileUrl,
+        searchStatus,
         rawText: text,
       });
 
@@ -313,9 +341,6 @@ async function inviteSearchResult(page, result, note) {
   if (preState === "connected") {
     return { ok: false, status: "connected", reason: "Already connected." };
   }
-  if (preState === "follow_only") {
-    return { ok: false, status: "follow_only", reason: "Profile exposes Follow instead of Connect." };
-  }
 
   let connectClicked = await clickFirstVisible(hero, [
     "a[href*='/preload/custom-invite/']",
@@ -327,15 +352,27 @@ async function inviteSearchResult(page, result, note) {
 
   if (!connectClicked) {
     const moreClicked = await clickFirstVisible(hero, [
+      "button[aria-label*='More']",
       "button[aria-label*='More actions']",
       "button[aria-label*='Więcej działań']",
+      "button[aria-label*='Action menu']",
       "button:has-text('More')",
       "button:has-text('Więcej')",
-      ]);
+      "button svg[aria-label='More actions']",
+      "button svg[aria-label='More']",
+    ]);
 
     if (moreClicked) {
       await page.waitForTimeout(700);
       connectClicked = await clickFirstVisible(page, [
+        "[role='menu'] [role='menuitem']:has-text('Connect')",
+        "[role='menu'] [role='menuitem']:has-text('Zaproś')",
+        "[role='menu'] div[role='button']:has-text('Connect')",
+        "[role='menu'] div[role='button']:has-text('Zaproś')",
+        "[role='menu'] button:has-text('Connect')",
+        "[role='menu'] button:has-text('Zaproś')",
+        "[role='listbox'] [role='option']:has-text('Connect')",
+        "[role='listbox'] [role='option']:has-text('Zaproś')",
         "div[role='button']:has-text('Connect')",
         "div[role='button']:has-text('Zaproś')",
         "button:has-text('Connect')",
@@ -927,34 +964,93 @@ export class LinkedInClient {
 
   async invitePeopleFromSearch(query, limit = 5, options = {}) {
     return this.withPage(async (page) => {
+      const searchWindow = Math.max(limit * 4, 20);
+      const maxPages = options.maxPages ?? Math.max(limit, 10);
+      const seenProfiles = new Set();
+      const skipped = [];
+      const results = [];
+      let matchedCount = 0;
+      let eligibleCount = 0;
+      let searchedPages = 0;
+
       await page.goto(buildPeopleSearchUrl(query), {
         waitUntil: "domcontentloaded",
       });
       await page.waitForTimeout(2500);
       await boundedNetworkIdle(page);
       await ensureSignedIn(page);
-      await scrollSearchResults(page, limit);
 
-      const candidates = await extractPeopleSearchResults(page, limit);
-      const results = [];
+      while (searchedPages < maxPages && results.filter((entry) => entry.status === "invited").length < limit) {
+        searchedPages += 1;
+        await scrollSearchResults(page, searchWindow);
 
-      for (const candidate of candidates.slice(0, limit)) {
-        const inviteResult = await inviteSearchResult(page, candidate, options.note);
-        results.push({
-          name: candidate.name,
-          headline: candidate.headline,
-          location: candidate.location,
-          profileUrl: candidate.profileUrl,
-          ...inviteResult,
+        const pageCandidates = await extractPeopleSearchResults(page, searchWindow);
+        const freshCandidates = pageCandidates.filter((candidate) => {
+          if (seenProfiles.has(candidate.profileUrl)) {
+            return false;
+          }
+          seenProfiles.add(candidate.profileUrl);
+          return true;
         });
+
+        matchedCount += freshCandidates.length;
+
+        for (const candidate of freshCandidates) {
+          if (candidate.searchStatus !== "invitable") {
+            skipped.push({
+              name: candidate.name,
+              headline: candidate.headline,
+              location: candidate.location,
+              profileUrl: candidate.profileUrl,
+              status: candidate.searchStatus,
+              reason:
+                candidate.searchStatus === "pending"
+                  ? "Invite already pending in search results."
+                  : candidate.searchStatus === "connected"
+                    ? "Already connected in search results."
+                    : candidate.searchStatus === "follow_only"
+                    ? "Search results expose Follow instead of Connect."
+                    : "Search results do not expose an invitable state.",
+            });
+            continue;
+          }
+
+          eligibleCount += 1;
+
+          const inviteResult = await inviteSearchResult(page, candidate, options.note);
+          results.push({
+            name: candidate.name,
+            headline: candidate.headline,
+            location: candidate.location,
+            profileUrl: candidate.profileUrl,
+            ...inviteResult,
+          });
+
+          if (results.filter((entry) => entry.status === "invited").length >= limit) {
+            break;
+          }
+        }
+
+        if (results.filter((entry) => entry.status === "invited").length >= limit) {
+          break;
+        }
+
+        const movedToNextPage = await goToNextSearchResultsPage(page);
+        if (!movedToNextPage) {
+          break;
+        }
       }
 
       return {
         ok: true,
         query,
         requestedLimit: limit,
-        matchedCount: candidates.length,
+        searchedPages,
+        matchedCount,
+        eligibleCount,
         invitedCount: results.filter((entry) => entry.status === "invited").length,
+        skippedCount: skipped.length,
+        skipped,
         results,
       };
     });
