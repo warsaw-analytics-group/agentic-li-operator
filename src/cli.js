@@ -15,6 +15,34 @@ import {
   saveSessionFile,
 } from "./operator.js";
 
+const SPINNER_FRAMES = ["◜", "◠", "◝", "◞", "◡", "◟"];
+
+async function withSpinner(label, task) {
+  if (!process.stdout.isTTY) {
+    return task();
+  }
+
+  let frameIndex = 0;
+  const render = () => {
+    output.write(`\r${SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]} ${label}`);
+    frameIndex += 1;
+  };
+
+  render();
+  const timer = setInterval(render, 120);
+
+  try {
+    const result = await task();
+    clearInterval(timer);
+    output.write(`\r○ ${label}\n`);
+    return result;
+  } catch (error) {
+    clearInterval(timer);
+    output.write(`\r○ ${label}\n`);
+    throw error;
+  }
+}
+
 async function confirmMutation(summary) {
   const rl = readline.createInterface({ input, output });
 
@@ -79,9 +107,11 @@ async function main() {
     .option("--output <path>", "write JSON output to a file")
     .action(async (options) => {
       const client = buildClient(program.opts());
-      const result = await client.getFeed(options.limit, {
-        debugArtifacts: options.debugArtifacts,
-      });
+      const result = await withSpinner("Fetching feed...", () =>
+        client.getFeed(options.limit, {
+          debugArtifacts: options.debugArtifacts,
+        }),
+      );
       await emitResult(result, options.output);
     });
 
@@ -93,9 +123,11 @@ async function main() {
     .option("--output <path>", "write JSON output to a file")
     .action(async (options) => {
       const client = buildClient(program.opts());
-      const result = await client.getInbox(options.limit, {
-        debugArtifacts: options.debugArtifacts,
-      });
+      const result = await withSpinner("Fetching inbox...", () =>
+        client.getInbox(options.limit, {
+          debugArtifacts: options.debugArtifacts,
+        }),
+      );
       await emitResult(result, options.output);
     });
 
@@ -109,7 +141,7 @@ async function main() {
     .option("--output <path>", "write JSON output to a file")
     .action(async (options) => {
       const client = buildClient(program.opts());
-      const result = await collectSessionData(client, options);
+      const result = await withSpinner("Collecting LinkedIn data...", () => collectSessionData(client, options));
       await emitResult(result, options.output);
     });
 
@@ -122,9 +154,11 @@ async function main() {
     .option("--output <path>", "write JSON output to a file")
     .action(async (options) => {
       const client = buildClient(program.opts());
-      const result = await client.searchPeople(options.query, options.limit, {
-        debugArtifacts: options.debugArtifacts,
-      });
+      const result = await withSpinner("Searching people...", () =>
+        client.searchPeople(options.query, options.limit, {
+          debugArtifacts: options.debugArtifacts,
+        }),
+      );
       await emitResult(result, options.output);
     });
 
@@ -148,9 +182,11 @@ async function main() {
       }
 
       const client = buildClient(program.opts());
-      const result = await client.invitePeopleFromSearch(options.query, options.limit, {
-        note: options.note,
-      });
+      const result = await withSpinner("Sending invites...", () =>
+        client.invitePeopleFromSearch(options.query, options.limit, {
+          note: options.note,
+        }),
+      );
       await emitResult(result, options.output);
     });
 
@@ -161,7 +197,7 @@ async function main() {
     .option("--output <path>", "write JSON output to a file")
     .action(async (options) => {
       const client = buildClient(program.opts());
-      const result = await client.getThread(options.threadUrl);
+      const result = await withSpinner("Opening thread...", () => client.getThread(options.threadUrl));
       await emitResult(result, options.output);
     });
 
@@ -182,7 +218,9 @@ async function main() {
       }
 
       const client = buildClient(program.opts());
-      const result = await client.sendMessage(options.threadUrl, options.message);
+      const result = await withSpinner("Sending message...", () =>
+        client.sendMessage(options.threadUrl, options.message),
+      );
       await emitResult(result);
     });
 
@@ -203,7 +241,9 @@ async function main() {
       }
 
       const client = buildClient(program.opts());
-      const result = await client.commentOnPost(options.postUrl, options.message);
+      const result = await withSpinner("Posting comment...", () =>
+        client.commentOnPost(options.postUrl, options.message),
+      );
       await emitResult(result);
     });
 
@@ -241,11 +281,13 @@ async function main() {
       }
 
       const client = buildClient(program.opts());
-      const result = await executeActionFile(
-        client,
-        path.resolve(options.sessionFile),
-        options.actionId,
-        { message: options.message },
+      const result = await withSpinner("Executing saved action...", () =>
+        executeActionFile(
+          client,
+          path.resolve(options.sessionFile),
+          options.actionId,
+          { message: options.message },
+        ),
       );
       await emitResult(result);
     });
@@ -257,9 +299,10 @@ async function main() {
     .option("--output <path>", "write JSON output to a file")
     .action(async (options) => {
       const backend = createDraftBackend();
+      const draft = await withSpinner("Drafting post...", () => backend.draftPost(options.prompt));
       const result = {
         backendMode: backend.mode,
-        draft: await backend.draftPost(options.prompt),
+        draft,
       };
       await emitResult(result, options.output);
     });
@@ -276,8 +319,10 @@ async function main() {
     .option("--debug-artifacts", "save screenshot and HTML for selector debugging")
     .action(async (options) => {
       const client = buildClient(program.opts());
-      const collected = await collectSessionData(client, options);
-      const proposed = await proposeActions(client, collected, options);
+      const collected = await withSpinner("Collecting LinkedIn data...", () => collectSessionData(client, options));
+      const proposed = await withSpinner("Drafting proposed actions...", () =>
+        proposeActions(client, collected, options),
+      );
       const session = { collected, proposed, approvals: [] };
       const result = await saveSessionFile(session);
       await emitResult({ ...result, actionCount: proposed.actions.length });

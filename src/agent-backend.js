@@ -51,6 +51,11 @@ async function draftWithOpenAi(prompt) {
 
 export function createDraftBackend() {
   const mode = process.env.OPENAI_API_KEY ? "openai" : "heuristic";
+  const languageGuard = [
+    "Use the same language as the user's source text by default.",
+    "Do not ask the user to confirm the language.",
+    "If the source text is mixed-language, prefer the language used in the latest user-provided text.",
+  ].join("\n");
 
   return {
     mode,
@@ -63,6 +68,7 @@ export function createDraftBackend() {
         "Draft a concise professional LinkedIn reply.",
         "Style: warm, direct, no fluff, 3-5 sentences max.",
         "Do not invent facts or commitments.",
+        languageGuard,
         `Thread title: ${thread.title || ""}`,
         "Recent messages:",
         clip(
@@ -84,6 +90,7 @@ export function createDraftBackend() {
         "Draft a concise professional LinkedIn comment.",
         "Style: natural, useful, non-generic, 1-3 sentences.",
         "Do not overpraise. Avoid emoji.",
+        languageGuard,
         `Post author: ${feedItem.actor || ""}`,
         `Post content: ${clip(feedItem.body || "")}`,
       ].join("\n");
@@ -101,6 +108,7 @@ export function createDraftBackend() {
           "Style: clear, credible, professional, compact paragraphs.",
           "Length: 120-220 words unless the prompt clearly requires shorter.",
           "No emoji unless explicitly requested.",
+          languageGuard,
           `Prompt: ${clip(prompt, 5000)}`,
         ].join("\n"),
       );
